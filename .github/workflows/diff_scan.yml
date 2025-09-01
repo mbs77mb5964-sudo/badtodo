@@ -27,8 +27,7 @@ jobs:
     steps:
       - name: Install git in container
         run: |
-          apt-get update
-          apt-get install -y git
+          apk add --no-cache git
 
       - uses: actions/checkout@v4
         with:
