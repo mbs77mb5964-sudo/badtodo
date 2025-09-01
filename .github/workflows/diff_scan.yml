@@ -1,0 +1,75 @@
+# https://semgrep.dev/docs/semgrep-ci/sample-ci-configs
+
+
+# Name of this GitHub Actions workflow.
+name: Semgrep CE scan
+
+on:
+  # Scan in PRs:
+  pull_request: {}
+  # Scan on-demand through GitHub Actions interface:
+  workflow_dispatch: {}
+  # Scan mainline branches and report all findings:
+  push:
+    branches: ["master", "main"]
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    # User definable name of this GitHub Actions job.
+    name: semgrep-oss/scan
+    # If you are self-hosting, change the following `runs-on` value: 
+    runs-on: ubuntu-latest
+
+    container:
+      # A Docker image with Semgrep installed. Do not change this.
+      image: semgrep/semgrep
+
+    # Skip any PR created by dependabot to avoid permission issues:
+    if: (github.actor != 'dependabot[bot]')
+
+    steps:
+      # Fetch project source with GitHub Actions Checkout. Use either v3 or v4.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 最新コミット1件分だけをフェッチする（浅いクローン / shallow clone）actions/checkout における特別な指定で、Git の通常の --depth=N に対応
+          ref: ${{ github.head_ref || github.ref_name }} #
+
+      # 必要な参照を明示的に取得
+      - name: Ensure refs
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} \
+                                     ${{ github.head_ref }}:refs/remotes/origin/${{ github.head_ref }}
+
+      - name: Compute changed files (NUL-delimited)
+        id: diff
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE=$(git merge-base origin/${{ github.base_ref }} HEAD)
+            git diff -z --name-only --diff-filter=d "$BASE"..HEAD > changed.nul
+          else
+            # push: 受信レンジ全体
+            git diff -z --name-only --diff-filter=d \
+              "${{ github.event.before }}".."${{ github.sha }}" > changed.nul
+          fi
+
+          if [ -s changed.nul ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+            # ログ用に見やすく20件まで表示
+            tr '\0' '\n' < changed.nul | head -20
+            n=$(tr '\0' '\n' < changed.nul | wc -l)
+            [ "$n" -gt 20 ] && echo "... and $((n-20)) more"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 例: Semgrep に安全に渡す
+      - name: Semgrep (diff)
+        if: steps.diff.outputs.has == 'true'
+        run: |
+          pip install --upgrade pip semgrep
+          xargs -0 -r semgrep --config=auto < changed.nul
