@@ -26,4 +26,4 @@ jobs:
             --error \
             --metrics=off \
             --baseline-commit $ \
-            --config auto
+            --config="p/default"
